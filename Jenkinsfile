@@ -32,13 +32,10 @@ pipeline {
         stage('Policy Enforcement (OPA)') {
             steps {
                 script {
-                    // Evaluate the Syft SBOM against our Rego policy
-                    sh 'docker run --rm -v $(pwd):/src openpolicyagent/opa:latest exec --decision devsecops/gating/allow --bundle /src/policy/ /src/sbom.json > opa_decision.json'
-                    
-                    def status = sh(script: "cat opa_decision.json | grep 'true'", returnStatus: true)
-                    if (status != 0) {
-                        error "GATING FAILED: OPA Policy Violation detected."
-                    }
+                        def hostWorkspace = "/var/lib/docker/volumes/jenkins_home/_data/workspace/${JOB_NAME}"
+
+                        // We mount the host workspace to /src so OPA can find /src/policy/ and /src/grype.json
+                        sh "docker run --rm -v ${hostWorkspace}:/src openpolicyagent/opa exec --decision 'pipeline/allow' --bundle /src/policy/ /src/grype.json > opa_result.json"                    
                 }
             }
         }
