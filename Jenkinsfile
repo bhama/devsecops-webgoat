@@ -15,10 +15,17 @@ pipeline {
 
         stage('SCA & SBOM (Syft & Grype)') {
             steps {
-                // Generate SBOM
-                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $(pwd) -o json > sbom.json'
-                // Scan for CVEs
-                sh 'docker run --rm -v $(pwd):/src anchore/grype:latest sbom.json --json > grype.json'
+                   script {
+                        // This is the path on your Debian Host, not the Jenkins container
+                        def hostWorkspace = "/var/lib/docker/volumes/jenkins_home/_data/workspace/${JOB_NAME}"
+
+                        // 1. Syft creates the SBOM
+                        sh "docker run --rm -v ${hostWorkspace}:/src anchore/syft:latest /src -o json > sbom.json"
+
+                        // 2. Grype scans the generated SBOM
+                        // Note: We mount the current workspace to /src so Grype can find 'sbom.json'
+                        sh "docker run --rm -v ${hostWorkspace}:/src anchore/grype:latest /src/sbom.json -o json > grype.json"
+                    }
             }
         }
 
