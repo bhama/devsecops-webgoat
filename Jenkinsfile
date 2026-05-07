@@ -25,11 +25,21 @@ pipeline {
         stage('Build Java Artifact') {
             steps {
                 script {
-                    echo "Compiling WebGoat with JDK 21+..."
-                    def REPO_PATH = "${env.HOST_WORKSPACE}/devsecops-webgoat"
+                    // 1. Identify the exact folder on the Debian Host
+                    // This combines the base workspace path with your repo folder name
+                    def HOST_REPO_PATH = "${env.HOST_WORKSPACE}/devsecops-webgoat"
                     
-                    // Switching from maven:3.9...-17 to the latest JDK 21 or 25-ea if available
-                    sh "docker run --rm -v ${REPO_PATH}:/usr/src/mymaven -w /usr/src/mymaven maven:3.9-eclipse-temurin-21 mvn clean package -DskipTests"
+                    echo "Compiling from Host Path: ${HOST_REPO_PATH}"
+
+                    // 2. Run Maven
+                    // We mount the HOST_REPO_PATH to the container's /usr/src/mymaven
+                    sh """
+                        docker run --rm \
+                        -v ${HOST_REPO_PATH}:/usr/src/mymaven \
+                        -w /usr/src/mymaven \
+                        maven:3.9-eclipse-temurin-21 \
+                        mvn clean package -DskipTests
+                    """
                 }
             }
         }
