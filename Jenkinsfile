@@ -57,7 +57,7 @@ pipeline {
                     
                     // Use triple double-quotes to ensure the shell gets the raw string
                     sh """
-                        docker build -t ${env.LOCAL_IMAGE} ${hostPath}
+                        docker build -t ${env.LOCAL_IMAGE} .
                     """
                 }
             }
