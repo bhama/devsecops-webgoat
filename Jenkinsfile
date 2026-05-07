@@ -50,9 +50,15 @@ pipeline {
         stage('Build Local Docker Image') {
             steps {
                 script {
-                    echo "Building image from host context..."
-                    // Pointing Docker to the host path where target/ was just created
-                    sh "docker build -t ${env.LOCAL_IMAGE} ${env.HOST_WORKSPACE}"
+                    // We define the path strictly as a string to avoid 'null' interpolation
+                    def hostPath = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/devsecops"
+                    
+                    echo "Forcing build from host path: ${hostPath}"
+                    
+                    // Use triple double-quotes to ensure the shell gets the raw string
+                    sh """
+                        docker build -t ${env.LOCAL_IMAGE} ${hostPath}
+                    """
                 }
             }
         }
