@@ -5,7 +5,7 @@ pipeline {
         TARGET_URL = "http://172.17.0.1:8082/WebGoat"
         DOJO_API_KEY = credentials('defectdojo-api-key')
         LOCAL_IMAGE = "my-local-webgoat:latest"
-        
+        HOST_CONTEXT = "${env.HOST_JOB_PATH}"
         // This MUST match the path you just chmodded
         HOST_WORKSPACE = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/${JOB_NAME}"
     }
@@ -40,7 +40,7 @@ pipeline {
                 script {
                     echo "Building image from host context..."
                     // Pointing Docker to the host path where target/ was just created
-                    sh "docker build -t ${LOCAL_IMAGE} ${HOST_WORKSPACE}"
+                    sh "docker build -t ${LOCAL_IMAGE} ${env.HOST_CONTEXT}"
                 }
             }
         }
