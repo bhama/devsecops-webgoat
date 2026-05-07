@@ -25,9 +25,11 @@ pipeline {
         stage('Build Java Artifact') {
             steps {
                 script {
-                    echo "Compiling WebGoat via ephemeral Maven container..."
-                    // This creates the 'target/*.jar' file that the Dockerfile requires
-                    sh "docker run --rm -v ${HOST_WORKSPACE}:/usr/src/mymaven -w /usr/src/mymaven maven:3.9-eclipse-temurin-17 mvn clean package -DskipTests"
+                    echo "Compiling WebGoat with JDK 21+..."
+                    def REPO_PATH = "${env.HOST_WORKSPACE}/devsecops-webgoat"
+                    
+                    // Switching from maven:3.9...-17 to the latest JDK 21 or 25-ea if available
+                    sh "docker run --rm -v ${REPO_PATH}:/usr/src/mymaven -w /usr/src/mymaven maven:3.9-eclipse-temurin-21 mvn clean package -DskipTests"
                 }
             }
         }
