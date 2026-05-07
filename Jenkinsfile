@@ -70,19 +70,19 @@ pipeline {
             }
         }
 
-         stage('Security Gate') {
+        stage('Security Gate') {
             steps {
                 script {
-                    echo "Evaluating Security Gate Thresholds using Dockerized JQ..."
+                    echo "Evaluating Security Gate Thresholds using Alpine JQ..."
                     
-                    // We run jq inside a container, mounting the host workspace
+                    // We use alpine:latest and install jq inside it to process the files
                     def criticalSca = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src imesh/jq jq '[.matches[] | select(.vulnerability.severity == \"Critical\")] | length' /src/grype.json", 
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq && jq \"[.matches[] | select(.vulnerability.severity == \\\"Critical\\\")] | length\" /src/grype.json'", 
                         returnStdout: true
                     ).trim().toInteger()
                     
                     def highSast = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src imesh/jq jq '[.results[] | select(.extra.severity == \"ERROR\")] | length' /src/semgrep.json", 
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq && jq \"[.results[] | select(.extra.severity == \\\"ERROR\\\")] | length\" /src/semgrep.json'", 
                         returnStdout: true
                     ).trim().toInteger()
 
@@ -92,6 +92,8 @@ pipeline {
                         echo "❌ SECURITY GATE FAILED: Policy violations detected."
                         env.GATE_FAILED = "true"
                         currentBuild.result = 'UNSTABLE'
+                    } else {
+                        echo "✅ SECURITY GATE PASSED."
                     }
                 }
             }
