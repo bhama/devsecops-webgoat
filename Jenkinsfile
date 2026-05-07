@@ -70,26 +70,28 @@ pipeline {
             }
         }
 
-        stage('Security Gate') {
+         stage('Security Gate') {
             steps {
-                script {                    
-                    sh "command -v jq >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y jq)"
-                    echo "Evaluating Security Gate Thresholds..."
-                    // Parse Grype for Critical vulnerabilities
-                    def criticalSca = sh(script: "jq '[.matches[] | select(.vulnerability.severity == \"Critical\")] | length' grype.json", returnStdout: true).trim().toInteger()
+                script {
+                    echo "Evaluating Security Gate Thresholds using Dockerized JQ..."
                     
-                    // Parse Semgrep for High (ERROR) severity findings
-                    def highSast = sh(script: "jq '[.results[] | select(.extra.severity == \"ERROR\")] | length' semgrep.json", returnStdout: true).trim().toInteger()
+                    // We run jq inside a container, mounting the host workspace
+                    def criticalSca = sh(
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src imesh/jq jq '[.matches[] | select(.vulnerability.severity == \"Critical\")] | length' /src/grype.json", 
+                        returnStdout: true
+                    ).trim().toInteger()
+                    
+                    def highSast = sh(
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src imesh/jq jq '[.results[] | select(.extra.severity == \"ERROR\")] | length' /src/semgrep.json", 
+                        returnStdout: true
+                    ).trim().toInteger()
 
                     echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
 
                     if (criticalSca > 0 || highSast > 0) {
                         echo "❌ SECURITY GATE FAILED: Policy violations detected."
                         env.GATE_FAILED = "true"
-                        // Set build to unstable so it still runs the Dojo stage
                         currentBuild.result = 'UNSTABLE'
-                    } else {
-                        echo "✅ SECURITY GATE PASSED."
                     }
                 }
             }
