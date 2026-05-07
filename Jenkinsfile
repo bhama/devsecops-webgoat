@@ -28,7 +28,7 @@ pipeline {
                         docker run --rm \
                         -v ${HOST_WORKSPACE}:/usr/src/mymaven \
                         -w /usr/src/mymaven \
-                        maven:3.9-eclipse-temurin-21 \
+                        maven:3.9-eclipse-temurin-25-beta \
                         bash -c "ls -la && mvn clean package -DskipTests"
                     """
                 }
