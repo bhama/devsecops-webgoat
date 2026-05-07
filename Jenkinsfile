@@ -5,9 +5,9 @@ pipeline {
         TARGET_URL = "http://172.17.0.1:8082/WebGoat"
         DOJO_API_KEY = credentials('defectdojo-api-key')
         LOCAL_IMAGE = "my-local-webgoat:latest"
-        HOST_CONTEXT = "${env.HOST_JOB_PATH}"
-        // This MUST match the path you just chmodded
+        // This MUST match the path on your Debian host
         HOST_WORKSPACE = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/${JOB_NAME}"
+        GATE_FAILED = false 
     }
 
     stages {
@@ -20,29 +20,14 @@ pipeline {
         stage('Build Java Artifact') {
             steps {
                 script {
-                    echo "Checking for pom.xml in workspace..."
-                    sh "ls -la" // This verifies files exist in Jenkins' view
-
-                    // We mount the ROOT of the workspace to the Maven container
+                    echo "Compiling WebGoat with JDK 25..."
                     sh """
                         docker run --rm \
                         -v ${HOST_WORKSPACE}:/usr/src/mymaven \
                         -w /usr/src/mymaven \
                         maven:3.9-eclipse-temurin-25 \
-                        bash -c "ls -la && mvn clean package -DskipTests"
+                        mvn clean package -DskipTests
                     """
-                }
-            }
-        }
-
-         stage('Path Sanity Check') {
-            steps {
-                script {
-                    echo "Checking if Host Workspace is set..."
-                    if (env.HOST_WORKSPACE == null || env.HOST_WORKSPACE == "null") {
-                        error "STOP: HOST_WORKSPACE is not defined! Check your environment block."
-                    }
-                    echo "Host Workspace is: ${env.HOST_WORKSPACE}"
                 }
             }
         }
@@ -50,15 +35,9 @@ pipeline {
         stage('Build Local Docker Image') {
             steps {
                 script {
-                    // We define the path strictly as a string to avoid 'null' interpolation
-                    def hostPath = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/devsecops"
-                    
-                    echo "Forcing build from host path: ${hostPath}"
-                    
-                    // Use triple double-quotes to ensure the shell gets the raw string
-                    sh """
-                        docker build -t ${env.LOCAL_IMAGE} .
-                    """
+                    echo "Building Docker image from host path..."
+                    // Using . works because Jenkins is already in the workspace root
+                    sh "docker build -t ${env.LOCAL_IMAGE} ."
                 }
             }
         }
@@ -67,6 +46,7 @@ pipeline {
             parallel {
                 stage('Semgrep') {
                     steps {
+                        // We use || true to ensure the pipeline doesn't crash before the Dojo upload
                         sh "docker run --rm -v ${HOST_WORKSPACE}:/src returntocorp/semgrep semgrep scan --json --config auto --output semgrep.json || true"
                     }
                 }
@@ -90,22 +70,67 @@ pipeline {
             }
         }
 
+        stage('Security Gate') {
+            steps {
+                script {
+                    echo "Evaluating Security Gate Thresholds..."
+                    
+                    // Parse Grype for Critical vulnerabilities
+                    def criticalSca = sh(script: "jq '[.matches[] | select(.vulnerability.severity == \"Critical\")] | length' grype.json", returnStdout: true).trim().toInteger()
+                    
+                    // Parse Semgrep for High (ERROR) severity findings
+                    def highSast = sh(script: "jq '[.results[] | select(.extra.severity == \"ERROR\")] | length' semgrep.json", returnStdout: true).trim().toInteger()
+
+                    echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
+
+                    if (criticalSca > 0 || highSast > 0) {
+                        echo "❌ SECURITY GATE FAILED: Policy violations detected."
+                        env.GATE_FAILED = "true"
+                        // Set build to unstable so it still runs the Dojo stage
+                        currentBuild.result = 'UNSTABLE'
+                    } else {
+                        echo "✅ SECURITY GATE PASSED."
+                    }
+                }
+            }
+        }
+
         stage('Radiate to Dojo') {
             steps {
                 script {
+                    sh "sudo chmod 644 semgrep.json grype.json zap_report.json || true"
+                    
+                    // Check if ZAP report has content
+                    def zapSize = sh(script: "stat -c %s zap_report.json", returnStdout: true).trim()
+                    echo "ZAP Report Size: ${zapSize} bytes"
+
+
+
                     def scans = [
                         'Semgrep JSON Report': 'semgrep.json',
                         'Anchore Grype': 'grype.json',
                         'ZAP Scan': 'zap_report.json'
                     ]
                     scans.each { type, file ->
-                        sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' \
-                            -H 'Authorization: Token ${DOJO_API_KEY}' \
+                        sh """
+                            curl -X POST '${env.DOJO_URL}/api/v2/import-scan/' \
+                            -H 'Authorization: Token ${env.DOJO_API_KEY}' \
                             -F 'scan_type=${type}' \
                             -F 'file=@${file}' \
                             -F 'product_name=WebGoat' \
                             -F 'engagement_name=DevSecOps POC' \
-                            -F 'auto_create_context=true'"
+                            -F 'auto_create_context=true'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Final Enforcement') {
+            steps {
+                script {
+                    if (env.GATE_FAILED == "true") {
+                        error "Failing build due to security policy violations. Review results in DefectDojo."
                     }
                 }
             }
