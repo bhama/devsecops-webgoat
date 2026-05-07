@@ -35,12 +35,24 @@ pipeline {
             }
         }
 
+         stage('Path Sanity Check') {
+            steps {
+                script {
+                    echo "Checking if Host Workspace is set..."
+                    if (env.HOST_WORKSPACE == null || env.HOST_WORKSPACE == "null") {
+                        error "STOP: HOST_WORKSPACE is not defined! Check your environment block."
+                    }
+                    echo "Host Workspace is: ${env.HOST_WORKSPACE}"
+                }
+            }
+        }
+
         stage('Build Local Docker Image') {
             steps {
                 script {
                     echo "Building image from host context..."
                     // Pointing Docker to the host path where target/ was just created
-                    sh "docker build -t ${LOCAL_IMAGE} ${env.HOST_CONTEXT}"
+                    sh "docker build -t ${env.LOCAL_IMAGE} ${env.HOST_CONTEXT}"
                 }
             }
         }
