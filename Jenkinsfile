@@ -1,13 +1,31 @@
 pipeline {
     agent any
     environment {
-        DOJO_URL = "http://localhost:8081"
-        TARGET_URL = "http://localhost:8000/WebGoat"
+        // Use the Bridge IP to reach DefectDojo on the host
+        DOJO_URL = "http://172.17.0.1:8080"
+        
+        // This matches the port we will use in the 'docker run' command below
+        TARGET_URL = "http://172.17.0.1:8082/WebGoat"
+        
         DOJO_API_KEY = credentials('defectdojo-api-key')
-        IMAGE_NAME = "local/webgoat-poc:latest"
+        
+        // The name for the image built from YOUR local repository
+        LOCAL_IMAGE = "my-local-webgoat:latest"
+        
         HOST_WORKSPACE = "/var/lib/docker/volumes/jenkins_home/_data/workspace/${JOB_NAME}"
     }
-   stages {
+    
+    stages {
+        stage('Build Local WebGoat') {
+            steps {
+                script {
+                    echo "Building Docker image from YOUR local repository..."
+                    // This builds the image using the Dockerfile in your repo root
+                    sh "docker build -t ${LOCAL_IMAGE} ."
+                }
+            }
+        }
+
         stage('SAST (Semgrep)') {
             steps {
                 script {
@@ -30,18 +48,17 @@ pipeline {
         stage('DAST (OWASP ZAP)') {
             steps {
                 script {
-                    echo "Starting WebGoat for Dynamic Scan..."
-                    // Start WebGoat in the background
-                    sh "docker run -d --name webgoat-test -p 8082:8080 webgoat/webgoat:latest"
+                    echo "Starting YOUR local WebGoat for Dynamic Scan..."
+                    // Start the image WE JUST BUILT
+                    sh "docker run -d --name webgoat-test -p 8082:8080 ${LOCAL_IMAGE}"
                     
-                    // Wait for the app to initialize
-                    sleep 30 
+                    echo "Waiting 60s for WebGoat to initialize..."
+                    sleep 60 
                     
-                    echo "Running ZAP Baseline Scan..."
-                    // We use the ZAP baseline scan to find common web vulnerabilities
-                    sh "docker run --rm -v ${HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://172.17.0.1:8082/WebGoat -J zap_report.json || true"
+                    echo "Running ZAP Baseline Scan against ${TARGET_URL}..."
+                    sh "docker run --rm -v ${HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${TARGET_URL} -J zap_report.json || true"
                     
-                    echo "Cleaning up WebGoat container..."
+                    echo "Cleaning up..."
                     sh "docker stop webgoat-test && docker rm webgoat-test"
                 }
             }
@@ -51,7 +68,6 @@ pipeline {
             steps {
                 script {
                     echo "Evaluating Security Policy with OPA..."
-                    // OPA evaluates the Grype results (SCA)
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/src openpolicyagent/opa exec --decision 'pipeline/allow' --bundle /src/policy/ /src/grype.json > opa_result.json"
                     
                     def opa_output = readJSON file: 'opa_result.json'
@@ -65,15 +81,15 @@ pipeline {
         stage('Radiate Results (DefectDojo)') {
             steps {
                 script {
-                    echo "Radiating all findings to DefectDojo..."
+                    echo "Radiating findings to DefectDojo..."
                     
-                    // Upload Semgrep (SAST)
+                    // SAST
                     sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=Semgrep JSON Report' -F 'file=@semgrep.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
 
-                    // Upload Grype (SCA)
+                    // SCA
                     sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=Anchore Grype' -F 'file=@grype.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
 
-                    // Upload ZAP (DAST)
+                    // DAST
                     sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=ZAP Scan' -F 'file=@zap_report.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
                 }
             }
