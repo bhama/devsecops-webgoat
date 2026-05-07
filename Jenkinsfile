@@ -52,7 +52,7 @@ pipeline {
                 script {
                     echo "Building image from host context..."
                     // Pointing Docker to the host path where target/ was just created
-                    sh "docker build -t ${env.LOCAL_IMAGE} ${env.HOST_CONTEXT}"
+                    sh "docker build -t ${env.LOCAL_IMAGE} ${env.HOST_WORKSPACE}"
                 }
             }
         }
