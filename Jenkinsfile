@@ -72,9 +72,9 @@ pipeline {
 
         stage('Security Gate') {
             steps {
-                script {
+                script {                    
+                    sh "command -v jq >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y jq)"
                     echo "Evaluating Security Gate Thresholds..."
-                    
                     // Parse Grype for Critical vulnerabilities
                     def criticalSca = sh(script: "jq '[.matches[] | select(.vulnerability.severity == \"Critical\")] | length' grype.json", returnStdout: true).trim().toInteger()
                     
@@ -99,7 +99,7 @@ pipeline {
             steps {
                 script {
                     sh "sudo chmod 644 semgrep.json grype.json zap_report.json || true"
-                    
+
                     // Check if ZAP report has content
                     def zapSize = sh(script: "stat -c %s zap_report.json", returnStdout: true).trim()
                     echo "ZAP Report Size: ${zapSize} bytes"
