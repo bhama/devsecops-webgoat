@@ -1,27 +1,44 @@
 pipeline {
     agent any
     environment {
-        // Use the Bridge IP to reach DefectDojo on the host
+        // Networking: Using host bridge IP for inter-container communication
         DOJO_URL = "http://172.17.0.1:8080"
-        
-        // This matches the port we will use in the 'docker run' command below
         TARGET_URL = "http://172.17.0.1:8082/WebGoat"
         
+        // Credentials and Image naming
         DOJO_API_KEY = credentials('defectdojo-api-key')
+        LOCAL_IMAGE = "devsecops-webgoat:latest"
         
-        // The name for the image built from YOUR local repository
-        LOCAL_IMAGE = "my-local-webgoat:latest"
-        
-        HOST_WORKSPACE = "/var/lib/docker/volumes/jenkins_home/_data/workspace/${JOB_NAME}"
+        // HOST Pathing: This is the view from the Debian host's perspective
+        // Ensure this matches your 'docker volume inspect' results
+        HOST_WORKSPACE = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/${JOB_NAME}"
     }
-    
+
     stages {
-        stage('Build Local WebGoat') {
+        stage('Checkout') {
+            steps {
+                // Ensure the repository is pulled into the root of the workspace
+                checkout scm
+            }
+        }
+
+        stage('Build Java Artifact') {
             steps {
                 script {
-                    echo "Building Docker image from YOUR local repository..."
-                    // This builds the image using the Dockerfile in your repo root
-                    sh "docker build -t ${LOCAL_IMAGE} ."
+                    echo "Compiling WebGoat via ephemeral Maven container..."
+                    // This creates the 'target/*.jar' file that the Dockerfile requires
+                    sh "docker run --rm -v ${HOST_WORKSPACE}:/usr/src/mymaven -w /usr/src/mymaven maven:3.9-eclipse-temurin-17 mvn clean package -DskipTests"
+                }
+            }
+        }
+
+        stage('Build Local Docker Image') {
+            steps {
+                script {
+                    echo "Building Docker image using host-path context: ${env.HOST_WORKSPACE}"
+                    // Granting local permissions to ensure Docker daemon can read the new 'target' folder
+                    sh "chmod -R 777 ."
+                    sh "docker build -t ${LOCAL_IMAGE} ${env.HOST_WORKSPACE}"
                 }
             }
         }
@@ -29,7 +46,7 @@ pipeline {
         stage('SAST (Semgrep)') {
             steps {
                 script {
-                    echo "Running SAST..."
+                    echo "Running SAST on source code..."
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/src returntocorp/semgrep semgrep scan --json --config auto --output semgrep.json || true"
                 }
             }
@@ -38,7 +55,7 @@ pipeline {
         stage('SCA & SBOM (Syft/Grype)') {
             steps {
                 script {
-                    echo "Generating SBOM and Scanning..."
+                    echo "Generating SBOM and Scanning for vulnerable dependencies..."
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/src anchore/syft:latest /src -o json > sbom.json"
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/src anchore/grype:latest /src/sbom.json -o json > grype.json"
                 }
@@ -48,17 +65,16 @@ pipeline {
         stage('DAST (OWASP ZAP)') {
             steps {
                 script {
-                    echo "Starting YOUR local WebGoat for Dynamic Scan..."
-                    // Start the image WE JUST BUILT
+                    echo "Starting local WebGoat container for dynamic testing..."
                     sh "docker run -d --name webgoat-test -p 8082:8080 ${LOCAL_IMAGE}"
                     
-                    echo "Waiting 60s for WebGoat to initialize..."
+                    echo "Waiting 60s for Java/Spring Boot to fully initialize..."
                     sleep 60 
                     
                     echo "Running ZAP Baseline Scan against ${TARGET_URL}..."
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${TARGET_URL} -J zap_report.json || true"
                     
-                    echo "Cleaning up..."
+                    echo "Cleaning up DAST environment..."
                     sh "docker stop webgoat-test && docker rm webgoat-test"
                 }
             }
@@ -67,12 +83,13 @@ pipeline {
         stage('Policy Enforcement (OPA)') {
             steps {
                 script {
-                    echo "Evaluating Security Policy with OPA..."
+                    echo "Evaluating security gate via OPA..."
+                    // This assumes you have a /policy folder in your repo with your .rego files
                     sh "docker run --rm -v ${HOST_WORKSPACE}:/src openpolicyagent/opa exec --decision 'pipeline/allow' --bundle /src/policy/ /src/grype.json > opa_result.json"
                     
                     def opa_output = readJSON file: 'opa_result.json'
                     if (opa_output.result[0].expressions[0].value == false) {
-                        error "GATING FAILED: Security policy violation (SCA). Build aborted."
+                        error "GATING FAILED: Security policy violation detected. Aborting build."
                     }
                 }
             }
@@ -81,18 +98,33 @@ pipeline {
         stage('Radiate Results (DefectDojo)') {
             steps {
                 script {
-                    echo "Radiating findings to DefectDojo..."
+                    echo "Pushing findings to DefectDojo..."
                     
-                    // SAST
-                    sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=Semgrep JSON Report' -F 'file=@semgrep.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
+                    def scans = [
+                        'Semgrep JSON Report': 'semgrep.json',
+                        'Anchore Grype': 'grype.json',
+                        'ZAP Scan': 'zap_report.json'
+                    ]
 
-                    // SCA
-                    sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=Anchore Grype' -F 'file=@grype.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
-
-                    // DAST
-                    sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' -H 'Authorization: Token ${DOJO_API_KEY}' -F 'scan_type=ZAP Scan' -F 'file=@zap_report.json' -F 'product_name=WebGoat' -F 'engagement_name=DevSecOps POC' -F 'auto_create_context=true'"
+                    scans.each { type, file ->
+                        sh "curl -X POST '${DOJO_URL}/api/v2/import-scan/' \
+                            -H 'Authorization: Token ${DOJO_API_KEY}' \
+                            -F 'scan_type=${type}' \
+                            -F 'file=@${file}' \
+                            -F 'product_name=WebGoat' \
+                            -F 'engagement_name=DevSecOps POC' \
+                            -F 'auto_create_context=true'"
+                    }
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            emailext body: "Build Status: ${currentBuild.currentResult}\nDetails: ${env.BUILD_URL}",
+                     subject: "DevSecOps Pipeline: ${env.JOB_NAME} [${currentBuild.currentResult}]",
+                     to: "admin@yourdomain.com"
         }
     }
 }
