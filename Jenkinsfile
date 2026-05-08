@@ -73,18 +73,23 @@ pipeline {
         stage('Security Gate') {
             steps {
                 script {
-                    echo "Evaluating Security Gate Thresholds using Alpine JQ..."
+                    echo "Evaluating Security Gate Thresholds..."
                     
-                    // We use alpine:latest and install jq inside it to process the files
-                    def criticalSca = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq && jq \"[.matches[] | select(.vulnerability.severity == \\\"Critical\\\")] | length\" /src/grype.json'", 
+                    // 1. Check Grype (SCA) - Redirecting apk output to /dev/null so only the number remains
+                    def criticalScaStr = sh(
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq > /dev/null && jq \"[.matches[] | select(.vulnerability.severity == \\\"Critical\\\")] | length\" /src/grype.json'", 
                         returnStdout: true
-                    ).trim().toInteger()
+                    ).trim()
                     
-                    def highSast = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq && jq \"[.results[] | select(.extra.severity == \\\"ERROR\\\")] | length\" /src/semgrep.json'", 
+                    // 2. Check Semgrep (SAST)
+                    def highSastStr = sh(
+                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq > /dev/null && jq \"[.results[] | select(.extra.severity == \\\"ERROR\\\")] | length\" /src/semgrep.json'", 
                         returnStdout: true
-                    ).trim().toInteger()
+                    ).trim()
+
+                    // Convert to integer now that the strings only contain the numbers
+                    def criticalSca = criticalScaStr.toInteger()
+                    def highSast = highSastStr.toInteger()
 
                     echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
 
