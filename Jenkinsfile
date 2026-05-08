@@ -112,13 +112,13 @@ pipeline {
                     def scans = [
                         'Semgrep JSON Report': 'semgrep.json',
                         'Anchore Grype': 'grype.json',
-                        'ZAP JSON Scan': 'zap_report.json' 
+                        'ZAP Scan': 'zap_report.json' 
                     ]
 
                     scans.each { dojoTypeName, fileName ->
                         if (fileExists(fileName)) {
                             echo "Uploading ${fileName} as ${dojoTypeName}..."
-                            
+                            sh "sudo chmod 644 zap_report.json || true"
                             // Use single quotes for the SH script to avoid Groovy interpolation warnings
                             // We pass the API Key as an environment variable directly
                             sh '''
