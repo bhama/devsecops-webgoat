@@ -37,15 +37,6 @@
             stage('Build Local Docker Image') {
                 steps {
                     script {
-                        // 1. List files to confirm where pom.xml is
-                        sh "ls -la" 
-
-                        // 2. Ensure the Jenkins user owns the workspace files 
-                        // (The Maven container often leaves files owned by root)
-                        sh "sudo chown -R jenkins:jenkins . || true"
-
-                        // 3. Run the build
-                        // If your Dockerfile is in a subfolder, use -f path/to/Dockerfile
                         sh "docker build -t ${env.LOCAL_IMAGE} ."
                     }
                 }
@@ -101,17 +92,27 @@
             stage('DAST (ZAP)') {
                 steps {
                     script {
-                            // Create an empty file and give it 777 permissions so the Docker user can write to it
-                            sh "touch zap_report.xml && chmod 777 zap_report.xml"
-                            
-                            echo "Starting DAST Scan on ${env.TARGET_URL}..."
-                            sh """
-                                docker run --rm --network host \
-                                -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
-                                ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                                -t ${env.TARGET_URL}/ \
-                                -r zap_report.xml || true
-                            """
+                        echo "Starting DAST Scan..."
+                        // 1. Run ZAP. The '|| true' is important.
+                        sh """
+                            docker run --rm --network host \
+                            -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
+                            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                            -t ${env.TARGET_URL} \
+                            -r zap_report.xml || true
+                        """
+                        
+                        // 2. Force a sync/wait to ensure the file is visible to Jenkins
+                        sh "sync" 
+                        
+                        // 3. Check if it exists and fix permissions if needed
+                        if (fileExists('zap_report.xml')) {
+                            echo "✅ ZAP report generated successfully."
+                            // Ensure the file is readable for the 'Radiate' stage
+                            sh "chmod 644 zap_report.xml"
+                        } else {
+                            error "❌ ZAP failed to create zap_report.xml. Check ZAP container logs."
+                        }
                     }
                 }
             }
