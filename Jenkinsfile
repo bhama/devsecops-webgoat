@@ -68,7 +68,7 @@ pipeline {
             }
         }
 
-       stage('Radiate D-Track to Dojo') {
+       /* stage('Radiate D-Track to Dojo') {
     steps {
         script {
             echo "Fetching findings from Dependency-Track..."
@@ -140,7 +140,7 @@ pipeline {
             echo "D-Track findings successfully uploaded to DefectDojo"
         }
     }
-}
+} */
 
         stage('Security Gate') {
     steps {
@@ -224,24 +224,63 @@ pipeline {
         }
     }
     
-    post {
-        always {
-            script {
-                def ghState = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
-                def ghMessage = (env.GATE_FAILED == "true") ? 
-                                'Security Gate Violation: Critical Vulnerabilities Found' : 
-                                "Build ${currentBuild.result}"
+  post {
+    always {
+        script {
+            // 1. Safely determine build state — currentBuild.result can be null mid-build
+            def buildResult = currentBuild.result ?: 'FAILURE'
 
-                step([$class: 'GitHubCommitStatusSetter',
-                    reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"],
-                    commitShaSource: [$class: "BuildDataRevisionShaSource"],
-                    contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
+            def ghState
+            def ghMessage
+
+            if (env.GATE_FAILED == "true") {
+                ghState   = 'FAILURE'
+                ghMessage = 'Security Gate: Critical/High vulnerabilities found'
+            } else if (buildResult == 'SUCCESS') {
+                ghState   = 'SUCCESS'
+                ghMessage = 'All checks passed'
+            } else if (buildResult == 'UNSTABLE') {
+                ghState   = 'FAILURE'          // GitHub only accepts: PENDING, SUCCESS, ERROR, FAILURE
+                ghMessage = "Build UNSTABLE — check pipeline logs"
+            } else {
+                ghState   = 'FAILURE'
+                ghMessage = "Build ${buildResult}"
+            }
+
+            echo "GitHub Commit Status → state: ${ghState}, message: ${ghMessage}"
+
+            // 2. Wrap in try/catch so a GitHub API failure never masks the real build result
+            try {
+                step([
+                    $class: 'GitHubCommitStatusSetter',
+                    reposSource: [
+                        $class: 'ManuallyEnteredRepositorySource',
+                        url: 'https://github.com/bhama/devsecops-webgoat'
+                    ],
+                    commitShaSource: [
+                        $class: 'BuildDataRevisionShaSource'
+                    ],
+                    contextSource: [
+                        $class: 'ManuallyEnteredCommitContextSource',
+                        context: 'Security-Gate/Jenkins'
+                    ],
+                    errorHandlers: [
+                        [$class: 'ChangingBuildStatusErrorHandler', result: 'UNSTABLE']
+                    ],
                     statusResultSource: [
                         $class: 'ConditionalStatusResultSource',
-                        results: [[$class: 'AnyBuildResult', message: ghMessage, state: ghState]]
+                        results: [[
+                            $class: 'AnyBuildResult',
+                            message: ghMessage,
+                            state: ghState
+                        ]]
                     ]
                 ])
+                echo "GitHub commit status updated successfully"
+            } catch (Exception e) {
+                echo "WARNING: Failed to update GitHub commit status — ${e.message}"
             }
         }
     }
+}
 }
