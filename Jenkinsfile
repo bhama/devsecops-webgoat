@@ -65,13 +65,14 @@ pipeline {
                 script {
                     sh "docker run -d --name webgoat-test -p 8082:8080 ${LOCAL_IMAGE}"
                     sleep 60
-                    sh "docker run --rm -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://172.17.0.1:8081 -r zap_report.xml"                    
+                    
+                    sh "docker run --rm -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${TARGET_URL} -r zap_report.xml"
                     sh "docker stop webgoat-test && docker rm webgoat-test"
                 }
             }
         }
 
-        stage('Security Gate') {
+        stage('Security Gate') {    
             steps {
                 script {
                     echo "Evaluating Security Gate Thresholds..."
@@ -125,7 +126,7 @@ pipeline {
                                 curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
                                 -H "Authorization: Token ${DOJO_API_KEY}" \
                                 -F "scan_type=''' + dojoTypeName + '''" \
-                                -F "file=@zap_report.xml" \
+                                -F "file=@''' + fileName + '''" \
                                 -F "product_name=WebGoat" \
                                 -F "engagement_name=DevSecOps POC" \
                                 -F "auto_create_context=true"
