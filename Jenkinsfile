@@ -8,6 +8,7 @@ pipeline {
         // This MUST match the path on your Debian host
         HOST_WORKSPACE = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/${JOB_NAME}"
         GATE_FAILED = false 
+        GITHUB_CRED = credentials('github-token')
     }
 
     stages {
@@ -142,6 +143,25 @@ pipeline {
                         error "Failing build due to security policy violations. Review results in DefectDojo."
                     }
                 }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                // Determine the status and message
+                def status = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
+                def msg = (env.GATE_FAILED == "true") ? "Security Gate Violation: Critical Flaws Found" : "Build ${status}"
+                
+                // Push the status back to GitHub
+                step([$class: 'GitHubCommitStatusSetter',
+                    contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
+                    errorHandlers: [[$class: 'ChangingBuildStatusErrorHandler', result: 'UNSTABLE']],
+                    statusResultSource: [
+                        $class: 'ConditionalStatusResultSource',
+                        results: [[$class: 'AnyBuildResult', message: msg, state: status]]
+                    ]
+                ])
             }
         }
     }
