@@ -65,7 +65,7 @@ pipeline {
                 script {
                     sh "docker run -d --name webgoat-test -p 8082:8080 ${LOCAL_IMAGE}"
                     sleep 60
-                    sh "docker run --rm -v ${HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${TARGET_URL} -J zap_report.json || true"
+                    sh "docker run --rm -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://172.17.0.1:8081 -r zap_report.xml"                    
                     sh "docker stop webgoat-test && docker rm webgoat-test"
                 }
             }
@@ -125,7 +125,7 @@ pipeline {
                                 curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
                                 -H "Authorization: Token ${DOJO_API_KEY}" \
                                 -F "scan_type=''' + dojoTypeName + '''" \
-                                -F "file=@''' + fileName + '''" \
+                                -F "file=@zap_report.xml" \
                                 -F "product_name=WebGoat" \
                                 -F "engagement_name=DevSecOps POC" \
                                 -F "auto_create_context=true"
@@ -146,20 +146,22 @@ pipeline {
             }
         }
     }
+    
     post {
         always {
             script {
-                // Determine the status and message
-                def status = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
-                def msg = (env.GATE_FAILED == "true") ? "Security Gate Violation: Critical Flaws Found" : "Build ${status}"
-                
-                // Push the status back to GitHub
+                def ghState = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
+                def ghMessage = (currentBuild.result == 'UNSTABLE') ? 
+                                'Security Gate Violation: Critical Vulnerabilities Found' : 
+                                "Build ${currentBuild.result}"
+
+                // Force the plugin to use the repository defined in your SCM
                 step([$class: 'GitHubCommitStatusSetter',
+                    reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"], 
                     contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
-                    errorHandlers: [[$class: 'ChangingBuildStatusErrorHandler', result: 'UNSTABLE']],
                     statusResultSource: [
                         $class: 'ConditionalStatusResultSource',
-                        results: [[$class: 'AnyBuildResult', message: msg, state: status]]
+                        results: [[$class: 'AnyBuildResult', message: ghMessage, state: ghState]]
                     ]
                 ])
             }
