@@ -115,12 +115,17 @@ pipeline {
                     def scans = [
                         'Semgrep JSON Report': 'semgrep.json',
                         'Anchore Grype': 'grype.json',
-                        'ZAP Scan': 'zap_report.xml' // Matched to XML
+                        'ZAP Scan': 'zap_report.xml' 
                     ]
 
                     scans.each { dojoTypeName, fileName ->
+                        // Logging for your visibility in Jenkins Console
                         if (fileExists(fileName)) {
-                            sh "sudo chmod 644 ${fileName} || true"
+                            echo "✅ Found ${fileName}. Uploading to Dojo as ${dojoTypeName}..."
+                            
+                            // Removed 'sudo' as it fails in the Jenkins container
+                            sh "chmod 644 ${fileName} || true"
+                            
                             sh """
                                 curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
                                 -H "Authorization: Token ${DOJO_API_KEY}" \
@@ -130,6 +135,8 @@ pipeline {
                                 -F "engagement_name=DevSecOps POC" \
                                 -F "auto_create_context=true"
                             """
+                        } else {
+                            echo "⚠️ WARNING: ${fileName} not found in workspace. Skipping ${dojoTypeName} upload."
                         }
                     }
                 }
@@ -155,9 +162,9 @@ pipeline {
                                 'Security Gate Violation: Critical Vulnerabilities Found' : 
                                 "Build ${currentBuild.result}"
 
-                // Explicitly define the repo name so it doesn't show "repos []"
+                // Explicitly pass the repository and commit SHA
                 step([$class: 'GitHubCommitStatusSetter',
-                    reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"], 
+                    reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"],
                     contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
                     statusResultSource: [
                         $class: 'ConditionalStatusResultSource',
