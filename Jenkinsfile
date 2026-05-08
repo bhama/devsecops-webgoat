@@ -145,43 +145,63 @@ pipeline {
         stage('Security Gate') {
     steps {
         script {
-            def criticalScaStr = sh(
-                script: '''
+
+            // Write the check script to a file — zero quoting issues
+            writeFile file: 'gate_check.sh', text: '''\
+#!/bin/sh
+set -e
+
+apk add --no-cache jq > /dev/null 2>&1
+
+# Grype SCA — Critical vulnerabilities
+if [ ! -f /src/grype.json ]; then
+    echo "ERROR: grype.json not found" >&2
+    exit 1
+fi
+
+# Semgrep SAST — ERROR severity
+if [ ! -f /src/semgrep.json ]; then
+    echo "ERROR: semgrep.json not found" >&2
+    exit 1
+fi
+
+CRIT=$(jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' /src/grype.json)
+SAST=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' /src/semgrep.json)
+
+echo "${CRIT} ${SAST}"
+'''
+
+            def result = sh(
+                script: """
                     docker run --rm \
-                        -v ''' + env.HOST_WORKSPACE + ''':/src \
-                        alpine sh -c \
-                        'apk add --no-cache jq > /dev/null 2>&1 && \
-                         jq "[.matches[] | select(.vulnerability.severity == \\"Critical\\")] | length" \
-                         /src/grype.json'
-                ''',
+                        -v ${env.HOST_WORKSPACE}:/src \
+                        -v ${env.WORKSPACE}/gate_check.sh:/gate_check.sh \
+                        alpine sh /gate_check.sh
+                """,
                 returnStdout: true
             ).trim()
 
-            def highSastStr = sh(
-                script: '''
-                    docker run --rm \
-                        -v ''' + env.HOST_WORKSPACE + ''':/src \
-                        alpine sh -c \
-                        'apk add --no-cache jq > /dev/null 2>&1 && \
-                         jq "[.results[] | select(.extra.severity == \\"ERROR\\")] | length" \
-                         /src/semgrep.json'
-                ''',
-                returnStdout: true
-            ).trim()
+            echo "Raw gate output: '${result}'"
 
-            // Guard against non-numeric output (e.g. jq errors leaking in)
-            if (!criticalScaStr.isInteger() || !highSastStr.isInteger()) {
-                error "Security Gate: unexpected jq output — SCA='${criticalScaStr}' SAST='${highSastStr}'"
+            // Validate output before parsing
+            if (!result || !result.contains(' ')) {
+                error "Security Gate: unexpected jq output — got: '${result}'"
             }
 
-            def criticalSca = criticalScaStr.toInteger()
-            def highSast    = highSastStr.toInteger()
+            def parts = result.tokenize(' ')
+            if (parts.size() != 2 || !parts[0].isInteger() || !parts[1].isInteger()) {
+                error "Security Gate: could not parse gate output — got: '${result}'"
+            }
+
+            def criticalSca = parts[0].toInteger()
+            def highSast    = parts[1].toInteger()
 
             echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
 
             if (criticalSca > 0 || highSast > 0) {
                 env.GATE_FAILED = "true"
                 currentBuild.result = 'UNSTABLE'
+                error "Security Gate: ${criticalSca} Critical SCA, ${highSast} High SAST findings exceed threshold"
             }
         }
     }
