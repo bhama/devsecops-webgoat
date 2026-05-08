@@ -37,6 +37,15 @@
             stage('Build Local Docker Image') {
                 steps {
                     script {
+                        // 1. List files to confirm where pom.xml is
+                        sh "ls -la" 
+
+                        // 2. Ensure the Jenkins user owns the workspace files 
+                        // (The Maven container often leaves files owned by root)
+                        sh "sudo chown -R jenkins:jenkins . || true"
+
+                        // 3. Run the build
+                        // If your Dockerfile is in a subfolder, use -f path/to/Dockerfile
                         sh "docker build -t ${env.LOCAL_IMAGE} ."
                     }
                 }
