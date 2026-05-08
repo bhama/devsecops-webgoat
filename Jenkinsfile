@@ -73,7 +73,7 @@ pipeline {
                 script {
                     echo "Fetching findings from Dependency-Track..."
                     sh """
-                        curl -X GET "http://172.17.0.1:8081/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
+                        curl -X GET "http://172.17.0.1:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
                         -H "X-Api-Key: ${DTRACK_API_KEY}" > dtrack_findings.json
                     """
                     
