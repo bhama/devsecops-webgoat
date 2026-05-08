@@ -68,55 +68,124 @@ pipeline {
             }
         }
 
-        stage('Radiate D-Track to Dojo') {
-            steps {
-                script {
-                    echo "Fetching findings from Dependency-Track..."
-                    sleep 20
-                    sh """
-                        curl -X GET "http://172.17.0.1:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
-                        -H "X-Api-Key: ${DTRACK_API_KEY}" > dtrack_findings.json
-                    """
-                    
-                    echo "Pushing D-Track findings to DefectDojo..."
-                    sh """
-                        curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
+       stage('Radiate D-Track to Dojo') {
+    steps {
+        script {
+            echo "Fetching findings from Dependency-Track..."
+            sleep 20
+
+            // 1. Export findings from Dependency-Track
+            sh """
+                curl -f -s -X GET \
+                    "http://172.17.0.1:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
+                    -H "X-Api-Key: ${DTRACK_API_KEY}" \
+                    -o dtrack_findings.json
+            """
+
+            // 2. Validate the file exists, is non-empty, and is valid JSON
+            def fileSize = sh(
+                script: "stat -c%s dtrack_findings.json 2>/dev/null || echo 0",
+                returnStdout: true
+            ).trim().toInteger()
+
+            if (fileSize == 0) {
+                error "dtrack_findings.json is empty or missing — aborting Dojo upload"
+            }
+
+            def isValidJson = sh(
+                script: "cat dtrack_findings.json | python3 -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null && echo valid || echo invalid",
+                returnStdout: true
+            ).trim()
+
+            if (isValidJson != "valid") {
+                sh "cat dtrack_findings.json"   // print the bad response for debugging
+                error "dtrack_findings.json is not valid JSON — aborting Dojo upload"
+            }
+
+            sh "echo 'File size: ${fileSize} bytes — JSON valid, proceeding to upload'"
+            sh "cat dtrack_findings.json | head -c 500"   // preview first 500 chars
+
+            // 3. Push findings to DefectDojo
+            echo "Pushing D-Track findings to DefectDojo..."
+            def dojoResponse = sh(
+                script: """
+                    curl -s -w "\\nHTTP_STATUS:%{http_code}" \
+                        -X POST "${DOJO_URL}/api/v2/import-scan/" \
                         -H "Authorization: Token ${DOJO_API_KEY}" \
                         -F "scan_type=Dependency Track Finding Packaging Format (FPF) Export" \
                         -F "file=@dtrack_findings.json" \
                         -F "product_name=WebGoat" \
                         -F "engagement_name=DevSecOps POC" \
                         -F "auto_create_context=true"
-                    """
-                }
+                """,
+                returnStdout: true
+            ).trim()
+
+            // 4. Parse and validate Dojo response
+            def httpStatus = dojoResponse.tokenize('\n')
+                                         .find { it.startsWith('HTTP_STATUS:') }
+                                         ?.replace('HTTP_STATUS:', '')
+                                         ?.trim()
+            def responseBody = dojoResponse
+                                    .replaceAll('HTTP_STATUS:\\d+', '')
+                                    .trim()
+
+            echo "DefectDojo HTTP Status : ${httpStatus}"
+            echo "DefectDojo Response    : ${responseBody}"
+
+            if (httpStatus != "201") {
+                error "DefectDojo upload failed — HTTP ${httpStatus}: ${responseBody}"
+            }
+
+            echo "D-Track findings successfully uploaded to DefectDojo"
+        }
+    }
+}
+
+        stage('Security Gate') {
+    steps {
+        script {
+            def criticalScaStr = sh(
+                script: '''
+                    docker run --rm \
+                        -v ''' + env.HOST_WORKSPACE + ''':/src \
+                        alpine sh -c \
+                        'apk add --no-cache jq > /dev/null 2>&1 && \
+                         jq "[.matches[] | select(.vulnerability.severity == \\"Critical\\")] | length" \
+                         /src/grype.json'
+                ''',
+                returnStdout: true
+            ).trim()
+
+            def highSastStr = sh(
+                script: '''
+                    docker run --rm \
+                        -v ''' + env.HOST_WORKSPACE + ''':/src \
+                        alpine sh -c \
+                        'apk add --no-cache jq > /dev/null 2>&1 && \
+                         jq "[.results[] | select(.extra.severity == \\"ERROR\\")] | length" \
+                         /src/semgrep.json'
+                ''',
+                returnStdout: true
+            ).trim()
+
+            // Guard against non-numeric output (e.g. jq errors leaking in)
+            if (!criticalScaStr.isInteger() || !highSastStr.isInteger()) {
+                error "Security Gate: unexpected jq output — SCA='${criticalScaStr}' SAST='${highSastStr}'"
+            }
+
+            def criticalSca = criticalScaStr.toInteger()
+            def highSast    = highSastStr.toInteger()
+
+            echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
+
+            if (criticalSca > 0 || highSast > 0) {
+                env.GATE_FAILED = "true"
+                currentBuild.result = 'UNSTABLE'
             }
         }
-
-        stage('Security Gate') {    
-            steps {
-                script {
-                    def criticalScaStr = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq > /dev/null && jq \"[.matches[] | select(.vulnerability.severity == \\\"Critical\\\")] | length\" /src/grype.json'", 
-                        returnStdout: true
-                    ).trim()
-                    
-                    def highSastStr = sh(
-                        script: "docker run --rm -v ${env.HOST_WORKSPACE}:/src alpine sh -c 'apk add --no-cache jq > /dev/null && jq \"[.results[] | select(.extra.severity == \\\"ERROR\\\")] | length\" /src/semgrep.json'", 
-                        returnStdout: true
-                    ).trim()
-
-                    def criticalSca = criticalScaStr.toInteger()
-                    def highSast = highSastStr.toInteger()
-
-                    echo "Gate Results: ${criticalSca} Critical SCA, ${highSast} High SAST"
-
-                    if (criticalSca > 0 || highSast > 0) {
-                        env.GATE_FAILED = "true"
-                        currentBuild.result = 'UNSTABLE'
-                    }
-                }
-            }
-        }
+    }
+}
 
         stage('Radiate Remaining to Dojo') {
             steps {
