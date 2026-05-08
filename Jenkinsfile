@@ -104,32 +104,32 @@ pipeline {
             }
         }
 
-        stage('Radiate to Dojo') {
+    stage('Radiate to Dojo') {
             steps {
                 script {
-                    sh "sudo chmod 644 semgrep.json grype.json zap_report.json || true"
-
-                    // Check if ZAP report has content
-                    def zapSize = sh(script: "stat -c %s zap_report.json", returnStdout: true).trim()
-                    echo "ZAP Report Size: ${zapSize} bytes"
-
-
-
+                    // Define the mapping. Note the change to 'ZAP JSON Scan'
                     def scans = [
                         'Semgrep JSON Report': 'semgrep.json',
                         'Anchore Grype': 'grype.json',
-                        'ZAP Scan': 'zap_report.json'
+                        'ZAP JSON Scan': 'zap_report.json' 
                     ]
-                    scans.each { type, file ->
-                        sh """
-                            curl -X POST '${env.DOJO_URL}/api/v2/import-scan/' \
-                            -H 'Authorization: Token ${env.DOJO_API_KEY}' \
-                            -F 'scan_type=${type}' \
-                            -F 'file=@${file}' \
-                            -F 'product_name=WebGoat' \
-                            -F 'engagement_name=DevSecOps POC' \
-                            -F 'auto_create_context=true'
-                        """
+
+                    scans.each { dojoTypeName, fileName ->
+                        if (fileExists(fileName)) {
+                            echo "Uploading ${fileName} as ${dojoTypeName}..."
+                            
+                            // Use single quotes for the SH script to avoid Groovy interpolation warnings
+                            // We pass the API Key as an environment variable directly
+                            sh '''
+                                curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
+                                -H "Authorization: Token ${DOJO_API_KEY}" \
+                                -F "scan_type=''' + dojoTypeName + '''" \
+                                -F "file=@''' + fileName + '''" \
+                                -F "product_name=WebGoat" \
+                                -F "engagement_name=DevSecOps POC" \
+                                -F "auto_create_context=true"
+                            '''
+                        }
                     }
                 }
             }
