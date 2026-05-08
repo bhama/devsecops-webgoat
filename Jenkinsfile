@@ -2,7 +2,7 @@
         agent any
         environment {
             DOJO_URL = "http://172.17.0.1:8080"
-            TARGET_URL = "http://localhost:8082/WebGoat" // Changed to localhost for --network host
+            TARGET_URL = "http://172.17.0.1:8082/WebGoat" // Changed to localhost for --network host
             DOJO_API_KEY = credentials('defectdojo-api-key')
             LOCAL_IMAGE = "my-local-webgoat:latest"
             HOST_WORKSPACE = "/var/lib/docker/volumes/devsecops-pipeline_jenkins_home/_data/workspace/${JOB_NAME}"
@@ -48,7 +48,11 @@
                         sh "docker rm -f webgoat-test || true"
                         sh "docker run -d --name webgoat-test -p 8082:8080 ${env.LOCAL_IMAGE}"
                         echo "Waiting for WebGoat to initialize..."
-                        sleep 30 // Increased sleep for Java startup
+                        sleep 30
+                        sh """
+                            timeout 120s bash -c 'until curl -Is ${env.TARGET_URL} | grep "200\\|302"; do echo "Still waiting..."; sleep 5; done'
+                        """
+                         // Increased sleep for Java startup
                     }
                 }
             }
@@ -93,6 +97,7 @@
                 steps {
                     script {
                         echo "Starting DAST Scan..."
+                        sh "touch zap_report.xml && chmod 777 zap_report.xml"
                         // 1. Run ZAP. The '|| true' is important.
                         sh """
                             docker run --rm --network host \
@@ -149,7 +154,7 @@
                         def scans = [
                             'Semgrep JSON Report': 'semgrep.json',
                             'Anchore Grype': 'grype.json',
-                            'ZAP Scan': 'zap_report.xml' 
+                            'ZAP XML Scan': 'zap_report.xml' 
                         ]
 
                         scans.each { dojoTypeName, fileName ->
