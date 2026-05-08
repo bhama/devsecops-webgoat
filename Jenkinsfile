@@ -82,7 +82,7 @@ pipeline {
                     sh """
                         curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
                         -H "Authorization: Token ${DOJO_API_KEY}" \
-                        -F "scan_type=Dependency Track Finding Packaging Format(FPF) Export" \
+                        -F "scan_type=Dependency Track Finding Packaging Format (FPF) Export" \                                      
                         -F "file=@dtrack_findings.json" \
                         -F "product_name=WebGoat" \
                         -F "engagement_name=DevSecOps POC" \
