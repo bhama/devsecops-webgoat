@@ -42,7 +42,7 @@ pipeline {
                     echo "Uploading to Dependency-Track..."
                     // Target the API port 8081 directly for the backend
                     sh """
-                        curl -X POST "http://localhost:8083/api/v1/bom" \
+                        curl -X POST "http://172.17.0.1:8083/api/v1/bom" \
                         -H "Content-Type: multipart/form-data" \
                         -H "X-Api-Key: ${DTRACK_API_KEY}" \
                         -F "project=${DTRACK_PROJECT_UUID}" \
@@ -72,8 +72,9 @@ pipeline {
             steps {
                 script {
                     echo "Fetching findings from Dependency-Track..."
+                    sleep 20
                     sh """
-                        curl -X GET "http://localhost:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
+                        curl -X GET "http://172.17.0.1:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
                         -H "X-Api-Key: ${DTRACK_API_KEY}" > dtrack_findings.json
                     """
                     
@@ -81,7 +82,7 @@ pipeline {
                     sh """
                         curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
                         -H "Authorization: Token ${DOJO_API_KEY}" \
-                        -F "scan_type=Dependency Track Finding Packaging" \
+                        -F "scan_type=Dependency Track Findings Export" \
                         -F "file=@dtrack_findings.json" \
                         -F "product_name=WebGoat" \
                         -F "engagement_name=DevSecOps POC" \
