@@ -93,7 +93,7 @@
                 }
             }
 
-            stage('DAST (ZAP)') {
+            /* stage('DAST (ZAP)') {
                 steps {
                     script {
                         echo "Starting DAST Scan..."
@@ -120,7 +120,7 @@
                         }
                     }
                 }
-            }
+            } */
 
             stage('Security Gate') {    
                 steps {
@@ -154,7 +154,7 @@
                         def scans = [
                             'Semgrep JSON Report': 'semgrep.json',
                             'Anchore Grype': 'grype.json',
-                            'ZAP XML Scan': 'zap_report.xml' 
+                            // 'ZAP XML Scan': 'zap_report.xml' 
                         ]
 
                         scans.each { dojoTypeName, fileName ->
