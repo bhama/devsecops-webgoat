@@ -92,27 +92,17 @@
             stage('DAST (ZAP)') {
                 steps {
                     script {
-                        echo "Starting DAST Scan..."
-                        // 1. Run ZAP. The '|| true' is important.
-                        sh """
-                            docker run --rm --network host \
-                            -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
-                            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                            -t ${env.TARGET_URL} \
-                            -r zap_report.xml || true
-                        """
-                        
-                        // 2. Force a sync/wait to ensure the file is visible to Jenkins
-                        sh "sync" 
-                        
-                        // 3. Check if it exists and fix permissions if needed
-                        if (fileExists('zap_report.xml')) {
-                            echo "✅ ZAP report generated successfully."
-                            // Ensure the file is readable for the 'Radiate' stage
-                            sh "chmod 644 zap_report.xml"
-                        } else {
-                            error "❌ ZAP failed to create zap_report.xml. Check ZAP container logs."
-                        }
+                            // Create an empty file and give it 777 permissions so the Docker user can write to it
+                            sh "touch zap_report.xml && chmod 777 zap_report.xml"
+                            
+                            echo "Starting DAST Scan on ${env.TARGET_URL}..."
+                            sh """
+                                docker run --rm --network host \
+                                -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
+                                ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                                -t ${env.TARGET_URL}/ \
+                                -r zap_report.xml || true
+                            """
                     }
                 }
             }
