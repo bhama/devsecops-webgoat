@@ -93,7 +93,7 @@
                 steps {
                     script {
                         echo "Starting DAST Scan..."
-                        // Adding '|| true' ensures the pipeline continues to the Dojo upload even if ZAP finds issues
+                        // 1. Run ZAP. The '|| true' is important.
                         sh """
                             docker run --rm --network host \
                             -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
@@ -101,6 +101,18 @@
                             -t ${env.TARGET_URL} \
                             -r zap_report.xml || true
                         """
+                        
+                        // 2. Force a sync/wait to ensure the file is visible to Jenkins
+                        sh "sync" 
+                        
+                        // 3. Check if it exists and fix permissions if needed
+                        if (fileExists('zap_report.xml')) {
+                            echo "✅ ZAP report generated successfully."
+                            // Ensure the file is readable for the 'Radiate' stage
+                            sh "chmod 644 zap_report.xml"
+                        } else {
+                            error "❌ ZAP failed to create zap_report.xml. Check ZAP container logs."
+                        }
                     }
                 }
             }
@@ -176,24 +188,25 @@
             }
         }
         
-        post {
-            always {
-                script {
-                    def ghState = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
-                    def ghMessage = (env.GATE_FAILED == "true") ? 
-                                    'Security Gate Violation: Critical Vulnerabilities Found' : 
-                                    "Build ${currentBuild.result}"
+            post {
+                always {
+                    script {
+                        def ghState = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
+                        def ghMessage = (env.GATE_FAILED == "true") ? 
+                                        'Security Gate Violation: Critical Vulnerabilities Found' : 
+                                        "Build ${currentBuild.result}"
 
-                    // Explicitly pass the repository and commit SHA
-                    step([$class: 'GitHubCommitStatusSetter',
-                        reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"],
-                        contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
-                        statusResultSource: [
-                            $class: 'ConditionalStatusResultSource',
-                            results: [[$class: 'AnyBuildResult', message: ghMessage, state: ghState]]
-                        ]
-                    ])
+                        step([$class: 'GitHubCommitStatusSetter',
+                            reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"],
+                            // Add this to ensure the SHA is never lost
+                            commitShaSource: [$class: "BuildDataRevisionShaSource"],
+                            contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
+                            statusResultSource: [
+                                $class: 'ConditionalStatusResultSource',
+                                results: [[$class: 'AnyBuildResult', message: ghMessage, state: ghState]]
+                            ]
+                        ])
+                    }
                 }
-            }
         }
     }
