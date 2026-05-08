@@ -70,19 +70,15 @@ pipeline {
         stage('DAST (ZAP)') {
             steps {
                 script {
-                    // Use --network host to reach port 8082 on the host
+                    echo "Starting DAST Scan..."
+                    // Adding '|| true' ensures the pipeline continues to the Dojo upload even if ZAP finds issues
                     sh """
                         docker run --rm --network host \
                         -v ${env.HOST_WORKSPACE}:/zap/wrk/:rw \
                         ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                         -t ${env.TARGET_URL} \
-                        -r zap_report.xml
+                        -r zap_report.xml || true
                     """
-                }
-            }
-            post {
-                always {
-                    sh "docker stop webgoat-test && docker rm webgoat-test || true"
                 }
             }
         }
@@ -154,12 +150,12 @@ pipeline {
     post {
         always {
             script {
-                // Ensure FAILURE is sent to GitHub if build is UNSTABLE or FAILED
                 def ghState = (currentBuild.result == 'SUCCESS') ? 'SUCCESS' : 'FAILURE'
                 def ghMessage = (env.GATE_FAILED == "true") ? 
                                 'Security Gate Violation: Critical Vulnerabilities Found' : 
                                 "Build ${currentBuild.result}"
 
+                // Explicitly define the repo name so it doesn't show "repos []"
                 step([$class: 'GitHubCommitStatusSetter',
                     reposSource: [$class: "ManuallyEnteredRepositorySource", url: "https://github.com/bhama/devsecops-webgoat"], 
                     contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: 'Security-Gate/Jenkins'],
