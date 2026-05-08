@@ -73,6 +73,30 @@
                 }
             }
 
+            stage('Radiate D-Track to Dojo') {
+                steps {
+                    script {
+                        echo "Fetching findings from Dependency-Track and pushing to Dojo..."
+                        // 1. Download the findings from D-Track (as a JSON file)
+                        sh """
+                            curl -X GET "http://172.17.0.1:8083/api/v1/finding/project/${DTRACK_PROJECT_UUID}/export" \
+                            -H "X-Api-Key: ${DTRACK_API_KEY}" > dtrack_findings.json
+                        """
+
+                        // 2. Upload that file to DefectDojo using the specific D-Track parser
+                        sh """
+                            curl -X POST "${DOJO_URL}/api/v2/import-scan/" \
+                            -H "Authorization: Token ${DOJO_API_KEY}" \
+                            -F "scan_type=Dependency Track Scan" \
+                            -F "file=@dtrack_findings.json" \
+                            -F "product_name=WebGoat" \
+                            -F "engagement_name=DevSecOps POC" \
+                            -F "auto_create_context=true"
+                        """
+                    }
+                }
+            }
+
             stage('SAST & SCA') {
                 parallel {
                     stage('Semgrep') {
