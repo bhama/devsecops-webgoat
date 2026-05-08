@@ -123,22 +123,15 @@ pipeline {
             steps {
                 script {
                     echo "Starting DAST Scan..."
-                    def zapStatus = sh(
-                        script: """
-                            docker run --rm --network host \
-                              -v ${HOST_WORKSPACE}:/zap/wrk/:rw \
-                              ghcr.io/zaproxy/zaproxy:stable \
-                              zap-baseline.py \
-                              -t ${TARGET_URL} \
-                              -r /zap/wrk/zap_report.xml
-                        """,
-                        returnStatus: true
-                    )
-
-                    if (zapStatus != 0) {
-                        echo "ZAP exited with code ${zapStatus}. The report may still have been generated."
-                        currentBuild.result = 'UNSTABLE'
-                    }
+                    sh """
+                docker run --rm --network host \
+                  -v ${WORKSPACE}:/zap/wrk/:rw \
+                  ghcr.io/zaproxy/zaproxy:stable \
+                  zap-baseline.py \
+                  -t ${TARGET_URL} \
+                  -r zap_report.xml
+            """
+            sh "ls -l ${WORKSPACE}/zap_report.xml || true"
                 }
             }
         }
